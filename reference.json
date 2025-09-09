@@ -1,0 +1,140 @@
+{
+  "signs": [
+    "Aries",
+    "Taurus",
+    "Gemini",
+    "Cancer",
+    "Leo",
+    "Virgo",
+    "Libra",
+    "Scorpio",
+    "Sagittarius",
+    "Capricorn",
+    "Aquarius",
+    "Pisces"
+  ],
+  "planets": [
+    "Sun",
+    "Moon",
+    "Mercury",
+    "Venus",
+    "Mars",
+    "Jupiter",
+    "Saturn",
+    "Uranus",
+    "Neptune",
+    "Pluto",
+    "North Node",
+    "South Node"
+  ],
+  "aspects": [
+    "conjunction",
+    "opposition",
+    "square",
+    "trine",
+    "sextile",
+    "quincunx"
+  ],
+  "cycles": [
+    "Saturn\u2013Neptune",
+    "Saturn\u2013Uranus",
+    "Saturn\u2013Pluto",
+    "Jupiter\u2013Saturn",
+    "Jupiter\u2013Uranus",
+    "Jupiter\u2013Neptune"
+  ],
+  "categories": [
+    "Geopolitics",
+    "Economy/Finance",
+    "Public Health",
+    "Science/Tech",
+    "Culture/Society",
+    "Environment"
+  ],
+  "waves": {
+    "1": {
+      "name": "Root Trinity",
+      "anchors": [
+        0,
+        10,
+        20
+      ]
+    },
+    "2": {
+      "name": "Soul Mirror",
+      "anchors": [
+        5,
+        15,
+        25
+      ]
+    },
+    "3": {
+      "name": "Spiral Initiate",
+      "anchors": [
+        3,
+        13,
+        23
+      ]
+    },
+    "4": {
+      "name": "Mystic Arc",
+      "anchors": [
+        7,
+        17,
+        27
+      ]
+    },
+    "5": {
+      "name": "Edge Dancers",
+      "anchors": [
+        9,
+        19,
+        29
+      ]
+    },
+    "6": {
+      "name": "Bridge Builders",
+      "anchors": [
+        2,
+        12,
+        22
+      ]
+    },
+    "7": {
+      "name": "Heart Weavers",
+      "anchors": [
+        4,
+        14,
+        24
+      ]
+    },
+    "8": {
+      "name": "Crystal Initiates",
+      "anchors": [
+        6,
+        16,
+        26
+      ]
+    },
+    "9": {
+      "name": "Harvesters",
+      "anchors": [
+        8,
+        18,
+        28
+      ]
+    },
+    "10": {
+      "name": "Genesis Mirrors",
+      "anchors": [
+        1,
+        11,
+        21
+      ]
+    }
+  },
+  "rules": {
+    "date_format": "YYYY-MM-DD",
+    "orb_deg_exact_window": 1.0
+  }
+}
