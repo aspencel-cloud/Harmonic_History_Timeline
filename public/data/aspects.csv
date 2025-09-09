@@ -1,0 +1,4 @@
+aspect_id,event_id,date,planet_a,planet_b,aspect,sign_a,deg_a,sign_b,deg_b,orb_deg,cycle_key,notes
+ASP-1989-SAT-NEP,EVT-1989-BERLIN-WALL,1989-11-13,Saturn,Neptune,conjunction,Capricorn,11.0,Capricorn,11.0,0.0,Saturn–Neptune,One of the exact hits in 1989; symbolic correlation to Berlin Wall events.
+ASP-2008-SAT-URA,EVT-2008-LEHMAN,2008-11-04,Saturn,Uranus,opposition,Virgo,18.0,Pisces,18.0,0.0,Saturn–Uranus,First exact opposition in the series spanning 2008–2010.
+ASP-2020-SAT-PLU,EVT-2020-WHO-PANDEMIC,2020-01-12,Saturn,Pluto,conjunction,Capricorn,22.0,Capricorn,22.0,0.0,Saturn–Pluto,Exact conjunction at ~22° Capricorn.
