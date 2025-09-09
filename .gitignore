@@ -1,9 +1,43 @@
+# === Python ===
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# === Data outputs ===
 outputs/
+*.log
+*.tmp
+*.bak
+*.swp
+
+# Jupyter notebooks (if you ever experiment)
+.ipynb_checkpoints/
+*.ipynb
+
+# === Node/JS (for your future React/D3 app) ===
 node_modules/
 dist/
 build/
+.next/
+.out/
+
+# === OS/system ===
 .DS_Store
 Thumbs.db
+
+# === Editors/IDE ===
+.vscode/
+.idea/
+
+# === Environment/config ===
 .env
+.env.local
+
