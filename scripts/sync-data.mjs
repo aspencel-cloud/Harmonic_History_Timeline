@@ -3,8 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 const ROOT = process.cwd();
-const SRC_DIR = path.join(ROOT, "data");        // canonical
-const DEST_DIR = path.join(ROOT, "public", "data"); // served to browser
+const SRC_DIR = path.join(ROOT, "data");             // canonical source
+const DEST_DIR = path.join(ROOT, "public", "data");  // served to browser
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -35,5 +35,10 @@ walk(SRC_DIR, (full) => {
   const dest = path.join(DEST_DIR, rel);
   copyFile(full, dest);
 });
+
+// Write a cache-busting version stamp used by the app's fetches
+const stamp = { updatedAt: new Date().toISOString() };
+fs.writeFileSync(path.join(DEST_DIR, "version.json"), JSON.stringify(stamp, null, 2));
+console.log("Wrote data/version.json");
 
 console.log("Data sync complete:", path.relative(ROOT, SRC_DIR), "→", path.relative(ROOT, DEST_DIR));

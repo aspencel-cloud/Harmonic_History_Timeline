@@ -8,12 +8,10 @@ import { Search, Filter, ChevronDown, Calendar, Activity } from "lucide-react";
  * - Prefers JSON if present; falls back to CSV
  * - Filters: search, year range, cycles, waves
  * - Groups by decade with clean cards
+ * - Cache-busts using /data/version.json written by scripts/sync-data.mjs
+ * - URL-synced filters (shareable + survives refresh)
  *
- * Place files in `/public/data` (or sync from `/data` → `/public/data`):
- *  - reference.json
- *  - events.csv (or events.json)
- *  - aspects.csv (or aspects.json)
- *  - waves.csv   (or waves.json)
+ * Put files in /data and run npm scripts; predev/prebuild will sync them to /public/data.
  */
 
 // ───────────────────────────────────────────────────────────────────────────────
@@ -87,7 +85,7 @@ export type Reference = {
   rules?: { orb_deg_exact_window?: number };
 };
 
-// Data file paths (JSON preferred; CSV fallback)
+// Data file base paths (JSON preferred; CSV fallback)
 const PATHS = {
   eventsJSON: "/data/events.json",
   eventsCSV: "/data/events.csv",
@@ -95,12 +93,14 @@ const PATHS = {
   aspectsCSV: "/data/aspects.csv",
   wavesJSON: "/data/waves.json",
   wavesCSV: "/data/waves.csv",
-  reference: "/data/reference.json"
+  reference: "/data/reference.json",
+  version: "/data/version.json"
 };
 
-async function tryFetchJSON<T>(url: string): Promise<T | null> {
+// Fetch helper that appends cache-busting version param
+async function tryFetchJSON<T>(url: string, v: string): Promise<T | null> {
   try {
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(url + v, { cache: "no-store" });
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {
@@ -108,24 +108,38 @@ async function tryFetchJSON<T>(url: string): Promise<T | null> {
   }
 }
 
-async function fetchCSV<T = any>(url: string): Promise<T[]> {
-  const res = await fetch(url, { cache: "no-store" });
+async function fetchCSV<T = any>(url: string, v: string): Promise<T[]> {
+  const res = await fetch(url + v, { cache: "no-store" });
   if (!res.ok) return [] as T[];
   const text = await res.text();
   return parseCSV(text) as unknown as T[];
 }
 
+async function getVersionParam(): Promise<string> {
+  try {
+    const res = await fetch(PATHS.version + `?t=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) return "";
+    const j = await res.json();
+    const ts = j?.updatedAt || "";
+    return ts ? `?v=${encodeURIComponent(ts)}` : "";
+  } catch {
+    return "";
+  }
+}
+
 async function loadData() {
+  const v = await getVersionParam();
+
   const [reference, eventsJ, aspectsJ, wavesJ] = await Promise.all([
-    tryFetchJSON<Reference>(PATHS.reference),
-    tryFetchJSON<EventRow[]>(PATHS.eventsJSON),
-    tryFetchJSON<AspectRow[]>(PATHS.aspectsJSON),
-    tryFetchJSON<WaveTagRow[]>(PATHS.wavesJSON)
+    tryFetchJSON<Reference>(PATHS.reference, v),
+    tryFetchJSON<EventRow[]>(PATHS.eventsJSON, v),
+    tryFetchJSON<AspectRow[]>(PATHS.aspectsJSON, v),
+    tryFetchJSON<WaveTagRow[]>(PATHS.wavesJSON, v)
   ]);
 
-  const events  = eventsJ  ?? await fetchCSV<EventRow>(PATHS.eventsCSV);
-  const aspects = aspectsJ ?? await fetchCSV<AspectRow>(PATHS.aspectsCSV);
-  const waves   = wavesJ   ?? await fetchCSV<WaveTagRow>(PATHS.wavesCSV);
+  const events  = eventsJ  ?? await fetchCSV<EventRow>(PATHS.eventsCSV, v);
+  const aspects = aspectsJ ?? await fetchCSV<AspectRow>(PATHS.aspectsCSV, v);
+  const waves   = wavesJ   ?? await fetchCSV<WaveTagRow>(PATHS.wavesCSV, v);
   return { reference, events, aspects, waves } as const;
 }
 
@@ -154,6 +168,39 @@ const ToggleChip: React.FC<{ active: boolean; onClick: () => void; label: string
 );
 
 // ───────────────────────────────────────────────────────────────────────────────
+// URL state helpers
+function parseNum(v: string | null, fallback: number | ""): number | "" {
+  if (v === null || v === "") return fallback;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+function parseCSVParam(v: string | null): string[] {
+  if (!v) return [];
+  return v.split(",").map(s => s.trim()).filter(Boolean);
+}
+function parseCSVParamNum(v: string | null): number[] {
+  return parseCSVParam(v).map(x => Number(x)).filter(n => Number.isFinite(n));
+}
+function setURLParams(params: {
+  q?: string;
+  start?: number | "";
+  end?: number | "";
+  cycles?: string[];
+  waves?: number[];
+}) {
+  const u = new URL(window.location.href);
+  const { q, start, end, cycles, waves } = params;
+  // clear first
+  ["q","start","end","cycles","waves"].forEach(k => u.searchParams.delete(k));
+  if (q) u.searchParams.set("q", q);
+  if (start !== "" && start !== undefined) u.searchParams.set("start", String(start));
+  if (end !== "" && end !== undefined) u.searchParams.set("end", String(end));
+  if (cycles && cycles.length) u.searchParams.set("cycles", cycles.join(","));
+  if (waves && waves.length) u.searchParams.set("waves", waves.join(","));
+  window.history.replaceState(null, "", u.toString());
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
 // Main component
 export default function HistoryTimelineApp() {
   const [loading, setLoading] = useState(true);
@@ -163,12 +210,20 @@ export default function HistoryTimelineApp() {
       reference: null, events: [], aspects: [], waves: []
     });
 
+  // Initialize filters from URL params
+  const url = typeof window !== "undefined" ? new URL(window.location.href) : null;
+  const initQ = url ? (url.searchParams.get("q") ?? "") : "";
+  const initStart = url ? parseNum(url.searchParams.get("start"), 1900) : 1900;
+  const initEnd = url ? parseNum(url.searchParams.get("end"), 2025) : 2025;
+  const initCycles = url ? parseCSVParam(url.searchParams.get("cycles")) : [];
+  const initWaves = url ? parseCSVParamNum(url.searchParams.get("waves")) : [];
+
   // Filters
-  const [q, setQ] = useState("");
-  const [start, setStart] = useState<number | "">(1900);
-  const [end, setEnd] = useState<number | "">(2025);
-  const [selectedCycles, setSelectedCycles] = useState<string[]>([]);
-  const [selectedWaves, setSelectedWaves] = useState<number[]>([]);
+  const [q, setQ] = useState(initQ);
+  const [start, setStart] = useState<number | "">(initStart);
+  const [end, setEnd] = useState<number | "">(initEnd);
+  const [selectedCycles, setSelectedCycles] = useState<string[]>(initCycles);
+  const [selectedWaves, setSelectedWaves] = useState<number[]>(initWaves);
 
   useEffect(() => {
     (async () => {
@@ -183,6 +238,29 @@ export default function HistoryTimelineApp() {
       }
     })();
   }, []);
+
+  // URL-sync filters on change
+  useEffect(() => {
+    setURLParams({
+      q,
+      start,
+      end,
+      cycles: selectedCycles,
+      waves: selectedWaves
+    });
+  }, [q, start, end, selectedCycles, selectedWaves]);
+
+  // Dev-time sanity warnings
+  useEffect(() => {
+    if (!events.length || !import.meta.env.DEV) return;
+    const ids = new Set(events.map(e => e.event_id));
+    const orphanAspects = aspects.filter(a => !ids.has(a.event_id));
+    const orphanWaves = waves.filter(w => !ids.has(w.event_id));
+    const badYear = events.filter(e => !Number.isFinite(yearOf(e.date)));
+    if (orphanAspects.length) console.warn("[data] Orphan aspects:", orphanAspects.map(a => a.aspect_id));
+    if (orphanWaves.length) console.warn("[data] Orphan waves:", orphanWaves.map(w => w.wave_tag_id));
+    if (badYear.length) console.warn("[timeline] Events with invalid year:", badYear.map(b => b.event_id));
+  }, [events, aspects, waves]);
 
   const cycles = reference?.cycles ?? [];
 
@@ -244,6 +322,14 @@ export default function HistoryTimelineApp() {
     return Array.from(g.entries()).sort((a, b) => a[0] - b[0]);
   }, [filtered]);
 
+  const resetFilters = () => {
+    setQ("");
+    setStart(1900);
+    setEnd(2025);
+    setSelectedCycles([]);
+    setSelectedWaves([]);
+  };
+
   if (loading) return <div className="p-6">Loading…</div>;
   if (error)   return <div className="p-6 text-red-600">{error}</div>;
 
@@ -255,6 +341,7 @@ export default function HistoryTimelineApp() {
           <Activity className="w-5 h-5"/>
           <h1 className="text-lg font-semibold">Harmonic History Timeline</h1>
           <span className="text-sm text-gray-500">View eras & events mapped to cycles + waves</span>
+          <span className="ml-auto text-sm text-gray-500">{filtered.length} result{filtered.length === 1 ? "" : "s"}</span>
         </div>
       </div>
 
@@ -277,7 +364,17 @@ export default function HistoryTimelineApp() {
           <input type="number" value={end} onChange={e=>setEnd(e.target.value ? Number(e.target.value) : "")} className="w-20 outline-none"/>
         </div>
 
-        <details className="border rounded-2xl px-3 py-2 bg-white shadow-sm">
+        <div className="flex items-center justify-end">
+          <button
+            onClick={resetFilters}
+            className="border rounded-2xl px-3 py-2 bg-white shadow-sm hover:bg-gray-50"
+            title="Reset all filters"
+          >
+            Reset
+          </button>
+        </div>
+
+        <details className="lg:col-span-4 border rounded-2xl px-3 py-2 bg-white shadow-sm">
           <summary className="flex items-center gap-2 cursor-pointer select-none">
             <Filter className="w-4 h-4 text-gray-500"/>Filters <ChevronDown className="w-4 h-4 ml-auto"/>
           </summary>
@@ -378,7 +475,7 @@ export default function HistoryTimelineApp() {
 }
 
 /* Wiring:
- * 1) Put data under /public/data (or sync from /data via a script).
+ * 1) Put data under /data; npm scripts will sync to /public/data with a version stamp.
  * 2) Import this component in src/App.tsx and render it.
- * 3) Optional: pre-generate JSON from CSV for faster loads; the loader prefers JSON.
+ * 3) Filters sync to the URL. Share a filtered view by copying the address bar.
  */
