@@ -2,3 +2,11 @@ aspect_id,event_id,date,planet_a,planet_b,aspect,sign_a,deg_a,sign_b,deg_b,orb_d
 ASP-1989-SAT-NEP,EVT-1989-BERLIN-WALL,1989-11-13,Saturn,Neptune,conjunction,Capricorn,11.0,Capricorn,11.0,0.0,Saturn–Neptune,One of the exact hits in 1989; symbolic correlation to Berlin Wall events.
 ASP-2008-SAT-URA,EVT-2008-LEHMAN,2008-11-04,Saturn,Uranus,opposition,Virgo,18.0,Pisces,18.0,0.0,Saturn–Uranus,First exact opposition in the series spanning 2008–2010.
 ASP-2020-SAT-PLU,EVT-2020-WHO-PANDEMIC,2020-01-12,Saturn,Pluto,conjunction,Capricorn,22.0,Capricorn,22.0,0.0,Saturn–Pluto,Exact conjunction at ~22° Capricorn.
+ASP-1914-SAT-PLU-1,EVT-1914-WW1-BEGIN,1914-07-28,Saturn,Pluto,square,,,,,,Saturn–Pluto,approx tag
+ASP-1929-SAT-PLU-1,EVT-1929-BLACK-THURSDAY,1929-10-24,Saturn,Pluto,square,,,,,,Saturn–Pluto,approx tag
+ASP-1969-SAT-URA-1,EVT-1969-APOLLO-11,1969-07-20,Saturn,Uranus,conjunction,,,,,,Saturn–Uranus,approx tag
+ASP-1971-SAT-NEP-1,EVT-1971-BRETTON-WOODS-END,1971-08-15,Saturn,Neptune,square,,,,,,Saturn–Neptune,approx tag
+ASP-1991-SAT-NEP-1,EVT-1991-USSR-DISSOLUTION,1991-12-26,Saturn,Neptune,conjunction,,,,,,Saturn–Neptune,approx tag
+ASP-2001-SAT-PLU-1,EVT-2001-911,2001-09-11,Saturn,Pluto,opposition,,,,,,Saturn–Pluto,approx tag
+ASP-2011-URA-PLU-1,EVT-2011-TOHOKU,2011-03-11,Uranus,Pluto,square,,,,,,Uranus–Pluto,approx tag
+ASP-2016-SAT-NEP-1,EVT-2016-BREXIT-REFERENDUM,2016-06-23,Saturn,Neptune,square,,,,,,Saturn–Neptune,approx tag

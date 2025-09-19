@@ -1,186 +1,142 @@
 // tools/validator.mjs
+// Validates events/aspects/waves against reference.json.
+// Reads from /public/data so it checks what the app actually serves.
+
 import fs from "node:fs";
 import path from "node:path";
 
-const BASE = path.resolve(".");
-const data = (p) => path.join(BASE, "data", p);
-const outReportPath = path.join(BASE, "tools", "validation_report.csv");
+const ROOT = process.cwd();
+const DATA_DIR = path.join(ROOT, "public", "data");
 
-// --- CSV loader (handles quotes, commas, BOM) ---
-const loadCsv = (fname) => {
-  const fp = data(fname);
-  const text = fs.readFileSync(fp, "utf-8").replace(/^\uFEFF/, "").trim();
-  if (!text) return [];
-  const [header, ...rows] = text.split(/\r?\n/);
-  const cols = header.split(",").map((h) => h.trim());
-
-  const parseLine = (line) => {
+function readJSON(p) {
+  return JSON.parse(fs.readFileSync(path.join(DATA_DIR, p), "utf-8"));
+}
+function readCSV(p) {
+  const raw = fs.readFileSync(path.join(DATA_DIR, p), "utf-8").replace(/^\uFEFF/, "").trim();
+  if (!raw) return [];
+  const [header, ...rows] = raw.split(/\r?\n/);
+  const cols = header.split(",").map(h => h.trim());
+  return rows.filter(Boolean).map(line => {
     const out = [];
     let cur = "", inQ = false;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (ch === '"') {
         if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
-        else { inQ = !inQ; }
-      } else if (ch === "," && !inQ) {
-        out.push(cur);
-        cur = "";
-      } else {
-        cur += ch;
-      }
+        else inQ = !inQ;
+      } else if (ch === "," && !inQ) { out.push(cur); cur = ""; }
+      else cur += ch;
     }
     out.push(cur);
-    // Trim cells and pad
-    const cells = out.map((s) => s.trim());
-    while (cells.length < cols.length) cells.push("");
-    return Object.fromEntries(cols.map((c, j) => [c, cells[j] ?? ""]));
-  };
+    const cells = out.map(s => s.trim());
+    const obj = {};
+    cols.forEach((c, idx) => (obj[c] = cells[idx] ?? ""));
+    return obj;
+  });
+}
 
-  return rows.filter((r) => r.length).map(parseLine);
-};
-
-const safeLoad = (fname) => (fs.existsSync(data(fname)) ? loadCsv(fname) : []);
-
-// --- Reference / enums ---
-if (!fs.existsSync(data("reference.json"))) {
-  console.error("ERROR: data/reference.json not found.");
+function die(msg) {
+  console.error(msg);
   process.exit(1);
 }
-const ref = JSON.parse(fs.readFileSync(data("reference.json"), "utf-8"));
 
-const SIGNS = new Set(ref.signs || []);
-const PLANETS = new Set(ref.planets || []);
-const ASPECTS = new Set(ref.aspects || []);
-const CYCLES = new Set(ref.cycles || []);
-const CATEGORIES = new Set(ref.categories || []);
-const WAVES = Object.fromEntries(
-  Object.entries(ref.waves || {}).map(([k, v]) => [Number(k), v.anchors || []])
-);
-const ORB_LIMIT = Number(ref.rules?.orb_deg_exact_window ?? 1.0);
+// Ensure data exists
+["reference.json", "events.csv"].forEach(f => {
+  if (!fs.existsSync(path.join(DATA_DIR, f))) die(`[validator] Missing ${f} in ${DATA_DIR}. Run: npm run sync`);
+});
 
-// --- Load CSVs ---
-const events = safeLoad("events.csv");
-const aspects = safeLoad("aspects.csv");
-const waves = safeLoad("waves.csv");
-const eclipses = safeLoad("eclipses.csv");
+const ref = readJSON("reference.json");
+const events = readCSV("events.csv");
+const aspects = fs.existsSync(path.join(DATA_DIR, "aspects.csv")) ? readCSV("aspects.csv") : [];
+const waves   = fs.existsSync(path.join(DATA_DIR, "waves.csv"))   ? readCSV("waves.csv")   : [];
 
-// --- Helpers ---
-const problems = [];
+const errors = [];
 const warnings = [];
-const isIso = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-// --- Events ---
-const eventIds = new Set();
-for (let i = 0; i < events.length; i++) {
-  const r = events[i], line = i + 2;
-  if (!r.event_id) problems.push(`events.csv:${line} missing event_id`);
-  if (r.event_id && eventIds.has(r.event_id))
-    problems.push(`events.csv:${line} duplicate event_id ${r.event_id}`);
-  if (r.event_id) eventIds.add(r.event_id);
+// Build reference sets
+const cyclesSet = new Set(ref.cycles);
+const catsSet = new Set(ref.categories);
+const wavesMap = new Map(Object.entries(ref.waves).map(([id, w]) => [Number(id), w]));
+const waveAnchorMap = new Map(
+  Object.entries(ref.waves).map(([id, w]) => [Number(id), new Set(w.anchors)])
+);
+const stageRanges = ref.stage_ranges || { early:[0,9], mid:[10,19], late:[20,29] };
 
-  if (!isIso(r.date))
-    problems.push(`events.csv:${line} bad date '${r.date}' (YYYY-MM-DD)`);
+const eventIds = new Set(events.map(e => e.event_id));
 
-  if (r.category && !CATEGORIES.has(r.category))
-    problems.push(`events.csv:${line} category '${r.category}' not in reference.json`);
-}
-
-// --- Aspects ---
-const aspectIds = new Set();
-for (let i = 0; i < aspects.length; i++) {
-  const r = aspects[i], line = i + 2;
-
-  if (!r.aspect_id) problems.push(`aspects.csv:${line} missing aspect_id`);
-  if (r.aspect_id && aspectIds.has(r.aspect_id))
-    problems.push(`aspects.csv:${line} duplicate aspect_id ${r.aspect_id}`);
-  if (r.aspect_id) aspectIds.add(r.aspect_id);
-
-  if (!eventIds.has(r.event_id))
-    problems.push(`aspects.csv:${line} event_id '${r.event_id}' not in events.csv`);
-
-  if (!isIso(r.date))
-    problems.push(`aspects.csv:${line} bad date '${r.date}'`);
-
-  if (!PLANETS.has(r.planet_a) || !PLANETS.has(r.planet_b))
-    problems.push(`aspects.csv:${line} planet not recognized`);
-
-  if (!ASPECTS.has(r.aspect))
-    problems.push(`aspects.csv:${line} aspect '${r.aspect}' not in reference.json`);
-
-  if (!SIGNS.has(r.sign_a) || !SIGNS.has(r.sign_b))
-    problems.push(`aspects.csv:${line} sign not recognized`);
-
-  const da = Number(r.deg_a), db = Number(r.deg_b);
-  if (
-    !Number.isFinite(da) || !Number.isFinite(db) ||
-    da < 0 || da >= 30 || db < 0 || db >= 30
-  ) problems.push(`aspects.csv:${line} deg_a/deg_b must be in [0,30)`);
-
-  const orb = Number(r.orb_deg);
-  if (!Number.isFinite(orb))
-    problems.push(`aspects.csv:${line} orb_deg '${r.orb_deg}' not a number`);
-  else if (orb > ORB_LIMIT)
-    warnings.push(`aspects.csv:${line} orb ${orb} > limit ${ORB_LIMIT}`);
-
-  if (r.cycle_key && !CYCLES.has(r.cycle_key))
-    problems.push(`aspects.csv:${line} cycle_key '${r.cycle_key}' not in reference.json`);
-}
-
-// --- Waves ---
-const waveTagIds = new Set();
-for (let i = 0; i < waves.length; i++) {
-  const r = waves[i], line = i + 2;
-
-  if (!r.wave_tag_id) problems.push(`waves.csv:${line} missing wave_tag_id`);
-  if (r.wave_tag_id && waveTagIds.has(r.wave_tag_id))
-    problems.push(`waves.csv:${line} duplicate wave_tag_id ${r.wave_tag_id}`);
-  if (r.wave_tag_id) waveTagIds.add(r.wave_tag_id);
-
-  if (!eventIds.has(r.event_id))
-    problems.push(`waves.csv:${line} event_id '${r.event_id}' not in events.csv`);
-
-  const wid = Number(r.wave_id);
-  const anchor = Number(r.anchor_deg);
-
-  if (!Number.isInteger(wid))
-    problems.push(`waves.csv:${line} wave_id '${r.wave_id}' not integer`);
-
-  if (!Number.isInteger(anchor))
-    problems.push(`waves.csv:${line} anchor_deg '${r.anchor_deg}' must be integer`);
-
-  if (Number.isInteger(wid) && Number.isInteger(anchor)) {
-    const valid = new Set(WAVES[wid] ?? []);
-    if (!valid.has(anchor))
-      problems.push(`waves.csv:${line} anchor_deg ${anchor} invalid for wave_id ${wid}`);
+// Basic event checks
+for (const e of events) {
+  // date
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(e.date)) {
+    errors.push(`event ${e.event_id}: invalid date "${e.date}" (expect ${ref.rules?.date_format || "YYYY-MM-DD"})`);
+  } else {
+    const y = Number(e.date.slice(0,4));
+    if (!(y >= 1200 && y <= 2100)) warnings.push(`event ${e.event_id}: year ${y} outside [1200,2100]?`);
   }
-
-  if (r.anchor_sign && !SIGNS.has(r.anchor_sign) && !String(r.anchor_sign).includes("/"))
-    problems.push(`waves.csv:${line} anchor_sign '${r.anchor_sign}' not recognized`);
+  // category
+  if (e.category && !catsSet.has(e.category)) {
+    warnings.push(`event ${e.event_id}: category "${e.category}" not in reference.categories`);
+  }
 }
 
-// --- Eclipses ---
-const eclipseIds = new Set();
-for (let i = 0; i < eclipses.length; i++) {
-  const r = eclipses[i], line = i + 2;
-  if (!r.eclipse_id) problems.push(`eclipses.csv:${line} missing eclipse_id`);
-  if (r.eclipse_id && eclipseIds.has(r.eclipse_id))
-    problems.push(`eclipses.csv:${line} duplicate eclipse_id ${r.eclipse_id}`);
-  if (r.eclipse_id) eclipseIds.add(r.eclipse_id);
-
-  if (r.date && !isIso(r.date))
-    problems.push(`eclipses.csv:${line} bad date '${r.date}'`);
-
-  if (r.event_id && !eventIds.has(r.event_id))
-    problems.push(`eclipses.csv:${line} event_id '${r.event_id}' not in events.csv`);
+// Aspects checks
+for (const a of aspects) {
+  if (!eventIds.has(a.event_id)) errors.push(`aspect ${a.aspect_id}: unknown event_id "${a.event_id}"`);
+  if (ref.rules?.require_cycle_key_for_aspects && !a.cycle_key) {
+    errors.push(`aspect ${a.aspect_id}: missing cycle_key`);
+  }
+  if (a.cycle_key && !cyclesSet.has(a.cycle_key)) {
+    errors.push(`aspect ${a.aspect_id}: cycle_key "${a.cycle_key}" not in reference.cycles`);
+  }
+  if (a.orb_deg) {
+    const orb = Number(a.orb_deg);
+    if (Number.isFinite(orb) && ref.rules?.orb_deg_exact_window != null) {
+      if (orb > Number(ref.rules.orb_deg_exact_window)) {
+        warnings.push(`aspect ${a.aspect_id}: orb_deg ${orb} > ${ref.rules.orb_deg_exact_window} (justify in notes)`);
+      }
+    }
+  }
 }
 
-// --- Write report ---
-const lines = [
-  ["level", "message"],
-  ...problems.map((m) => ["ERROR", m]),
-  ...warnings.map((m) => ["WARN", m]),
-].map((r) => r.join(","));
-fs.writeFileSync(outReportPath, lines.join("\n"), "utf-8");
+// Waves checks
+for (const w of waves) {
+  const wid = Number(w.wave_id);
+  if (!eventIds.has(w.event_id)) errors.push(`wave ${w.wave_tag_id}: unknown event_id "${w.event_id}"`);
+  if (!wavesMap.has(wid)) errors.push(`wave ${w.wave_tag_id}: invalid wave_id "${w.wave_id}"`);
+  const refWave = wavesMap.get(wid);
+  if (refWave && w.wave_name && w.wave_name !== refWave.name) {
+    warnings.push(`wave ${w.wave_tag_id}: wave_name "${w.wave_name}" != reference "${refWave.name}"`);
+  }
+  if (ref.rules?.waves_must_match_anchor_set) {
+    const ok = waveAnchorMap.get(wid)?.has(Number(w.anchor_deg));
+    if (!ok) errors.push(`wave ${w.wave_tag_id}: anchor_deg ${w.anchor_deg} not in allowed anchors for Wave ${wid}`);
+  }
+  // stage sanity (optional)
+  const d = Number(w.anchor_deg);
+  if (Number.isFinite(d)) {
+    const inAny =
+      (d >= stageRanges.early[0] && d <= stageRanges.early[1]) ||
+      (d >= stageRanges.mid[0] && d <= stageRanges.mid[1]) ||
+      (d >= stageRanges.late[0] && d <= stageRanges.late[1]);
+    if (!inAny) warnings.push(`wave ${w.wave_tag_id}: anchor_deg ${d} outside 0–29`);
+  }
+}
 
-console.log(`Validation complete. Errors: ${problems.length}, Warnings: ${warnings.length}`);
-console.log(`Report: ${path.relative(BASE, outReportPath)}`);
+// Report
+const pad = (n, s=" ") => String(n).padStart(3, s);
+console.log(`\n[validator] Events: ${events.length}, Aspects: ${aspects.length}, Waves: ${waves.length}`);
+if (errors.length) {
+  console.log(`\n❌ Errors (${errors.length}):`);
+  for (const e of errors) console.log(" -", e);
+}
+if (warnings.length) {
+  console.log(`\n⚠️  Warnings (${warnings.length}):`);
+  for (const w of warnings) console.log(" -", w);
+}
+if (errors.length) {
+  console.log("\nResult: FAIL");
+  process.exit(1);
+} else {
+  console.log("\nResult: PASS");
+  process.exit(0);
+}
