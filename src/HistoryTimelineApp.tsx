@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Search, Filter, ChevronDown, Calendar, Activity, LayoutGrid, Sun, Moon, SlidersHorizontal } from "lucide-react";
+import EraJumps from "./components/EraJumps";
+import CycleJumps from "./components/CycleJumps";
+import WaveJumps from "./components/WaveJumps";
 
 // ───────────────────────────────────────────────────────────────────────────────
 // CSV parser
@@ -68,6 +71,15 @@ export type Reference = {
   rules?: { orb_deg_exact_window?: number };
 };
 
+type ViewMode = "decade" | "cycle" | "wave";
+
+type HistoryTimelineAppProps = {
+  yearStart?: number | "";
+  yearEnd?: number | "";
+  onSetYearRange?: (start: number | "", end: number | "") => void;
+};
+
+// ───────────────────────────────────────────────────────────────────────────────
 // Data paths
 const PATHS = {
   eventsJSON: "/data/events.json",
@@ -80,6 +92,7 @@ const PATHS = {
   version: "/data/version.json"
 };
 
+// ───────────────────────────────────────────────────────────────────────────────
 // Fetch helpers with cache-bust
 async function tryFetchJSON<T>(url: string, v: string): Promise<T | null> {
   try {
@@ -117,7 +130,8 @@ async function loadData() {
   return { reference, events, aspects, waves } as const;
 }
 
-// helpers
+// ───────────────────────────────────────────────────────────────────────────────
+// Helpers
 function yearOf(date: string): number {
   const y = Number(date?.slice(0, 4));
   return Number.isFinite(y) ? y : NaN;
@@ -128,6 +142,18 @@ function stageOfDegree(deg: number) {
   if (deg >= 10 && deg <= 19) return "Mid";
   if (deg >= 20 && deg <= 29) return "Late";
   return "";
+}
+
+// Dash/cycle normalization (forgiving comparisons)
+const EN_DASH = "\u2013";
+const DASH_RX = /[\u2012\u2013\u2014\u2212-]/g; // figure/en/em/minus/hyphen
+function normalizeDashes(input: string): string {
+  return input
+    .replace(DASH_RX, EN_DASH)
+    .replace(/\s*\u2013\s*/g, EN_DASH); // tighten spaces around dash
+}
+function canonicalizeCycleKey(raw: string): string {
+  return normalizeDashes(raw).replace(/\s+/g, " ").trim();
 }
 
 // UI helpers
@@ -182,7 +208,6 @@ const OptSwitch: React.FC<{ checked: boolean; onChange: (v:boolean)=>void; label
 );
 
 // URL state helpers
-type ViewMode = "decade" | "cycle" | "wave";
 function parseNum(v: string | null, fallback: number | ""): number | "" {
   if (v === null || v === "") return fallback;
   const n = Number(v); return Number.isFinite(n) ? n : fallback;
@@ -216,7 +241,7 @@ function SectionShell({ title, children }: { title: string; children: React.Reac
 
 // ───────────────────────────────────────────────────────────────────────────────
 // Main
-export default function HistoryTimelineApp() {
+export default function HistoryTimelineApp(props: HistoryTimelineAppProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [{ reference, events, aspects, waves }, setData] =
@@ -228,7 +253,11 @@ export default function HistoryTimelineApp() {
   const initQ = url ? (url.searchParams.get("q") ?? "") : "";
   const initStart = url ? parseNum(url.searchParams.get("start"), 1900) : 1900;
   const initEnd = url ? parseNum(url.searchParams.get("end"), 2025) : 2025;
-  const initCycles = url ? parseCSVParam(url.searchParams.get("cycles")) : [];
+
+  // Canonicalize cycles on URL init so hyphen inputs also work
+  const initCyclesRaw = url ? parseCSVParam(url.searchParams.get("cycles")) : [];
+  const initCycles = initCyclesRaw.map(canonicalizeCycleKey);
+
   const initWaves = url ? parseCSVParamNum(url.searchParams.get("waves")) : [];
   const initView: ViewMode = (url?.searchParams.get("view") as ViewMode) || "decade";
 
@@ -243,25 +272,43 @@ export default function HistoryTimelineApp() {
   });
   const [compact, setCompact] = useState<boolean>(() => (localStorage.getItem("opt_compact") === "1"));
 
-  // Filters
+  // Filters (controlled-friendly)
   const [q, setQ] = useState(initQ);
-  const [start, setStart] = useState<number | "">(initStart);
-  const [end, setEnd] = useState<number | "">(initEnd);
+
+  // local mirrors for start/end; overridden if parent provides props
+  const [startLocal, setStartLocal] = useState<number | "">(initStart);
+  const [endLocal, setEndLocal] = useState<number | "">(initEnd);
+
+  // reflect parent props into locals (controlled mode)
+  useEffect(() => {
+    if (props.yearStart !== undefined) setStartLocal(props.yearStart);
+  }, [props.yearStart]);
+  useEffect(() => {
+    if (props.yearEnd !== undefined) setEndLocal(props.yearEnd);
+  }, [props.yearEnd]);
+
+  // unified getters/setters used by rest of component
+  const start = props.yearStart !== undefined ? props.yearStart : startLocal;
+  const end   = props.yearEnd   !== undefined ? props.yearEnd   : endLocal;
+
+  const setStart = (v: number | "") => {
+    if (props.onSetYearRange) props.onSetYearRange(v, end);
+    else setStartLocal(v);
+  };
+  const setEnd = (v: number | "") => {
+    if (props.onSetYearRange) props.onSetYearRange(start, v);
+    else setEndLocal(v);
+  };
+
   const [selectedCycles, setSelectedCycles] = useState<string[]>(initCycles);
   const [selectedWaves, setSelectedWaves] = useState<number[]>(initWaves);
   const [view, setView] = useState<ViewMode>(initView);
 
-  // Apply theme: html class + data-theme + UA color-scheme
+  // Apply theme
   useEffect(() => {
     const root = document.documentElement;
-
-    // Tailwind-style class (if any dark: classes are used)
     root.classList.toggle("dark", dark);
-
-    // Explicit theme attribute so we can override OS preference
     root.setAttribute("data-theme", dark ? "dark" : "light");
-
-    // Hint native widgets
     let meta = document.querySelector('meta[name="color-scheme"]') as HTMLMetaElement | null;
     if (!meta) {
       meta = document.createElement("meta");
@@ -269,7 +316,6 @@ export default function HistoryTimelineApp() {
       document.head.appendChild(meta);
     }
     meta.setAttribute("content", dark ? "dark" : "light");
-
     localStorage.setItem("opt_dark", dark ? "1" : "0");
   }, [dark]);
 
@@ -278,6 +324,7 @@ export default function HistoryTimelineApp() {
     localStorage.setItem("opt_compact", compact ? "1" : "0");
   }, [compact]);
 
+  // Load data
   useEffect(() => {
     (async () => {
       try {
@@ -292,6 +339,7 @@ export default function HistoryTimelineApp() {
     })();
   }, []);
 
+  // Sync URL
   useEffect(() => {
     setURLParams({ q, start, end, cycles: selectedCycles, waves: selectedWaves, view });
   }, [q, start, end, selectedCycles, selectedWaves, view]);
@@ -308,7 +356,28 @@ export default function HistoryTimelineApp() {
     if (badYear.length) console.warn("[timeline] Events with invalid year:", badYear.map(b => b.event_id));
   }, [events, aspects, waves]);
 
-  const cyclesRef = reference?.cycles ?? [];
+  // Canonical cycles for ordering/labels
+  const cyclesRefRaw = reference?.cycles ?? [];
+  const cyclesRef = useMemo(() => cyclesRefRaw.map(canonicalizeCycleKey), [cyclesRefRaw]);
+
+  // Quick-jump display lists
+  const cyclesDisplay = cyclesRef; // nice en-dash labels already
+
+  const wavesDisplay = useMemo(() => {
+    const out: { id: number; label: string }[] = [];
+    const entries = reference?.waves ? Object.entries(reference.waves) : [];
+    const sorted = entries.sort((a, b) => Number(a[0]) - Number(b[0]));
+    for (const [idStr, meta] of sorted) {
+      const id = Number(idStr);
+      if (!Number.isFinite(id)) continue;
+      const name = (meta as any)?.name ?? `Wave ${id}`;
+      out.push({ id, label: `Wave ${id} — ${name}` });
+    }
+    if (!out.length) {
+      for (let i = 1; i <= 10; i++) out.push({ id: i, label: `Wave ${i}` });
+    }
+    return out;
+  }, [reference?.waves]);
 
   // Join
   const eventsEnriched = useMemo(() => {
@@ -342,7 +411,10 @@ export default function HistoryTimelineApp() {
       if (q && !hay.includes(q.toLowerCase())) return false;
 
       if (selectedCycles.length) {
-        const ok = e._aspects.some(a => a.cycle_key && selectedCycles.includes(a.cycle_key));
+        const ok = e._aspects.some(a => {
+          const k = a.cycle_key ? canonicalizeCycleKey(a.cycle_key) : "";
+          return k && selectedCycles.includes(k);
+        });
         if (!ok) return false;
       }
       if (selectedWaves.length) {
@@ -369,12 +441,19 @@ export default function HistoryTimelineApp() {
   const cycleGroups = useMemo(() => {
     const present = new Map<string, EventRow[]>();
     filtered.forEach(ev => {
-      const keys = Array.from(new Set(ev._aspects.map(a => a.cycle_key).filter(Boolean))) as string[];
+      const keys = Array.from(
+        new Set(
+          ev._aspects
+            .map(a => a.cycle_key ? canonicalizeCycleKey(a.cycle_key) : "")
+            .filter(Boolean)
+        )
+      ) as string[];
       keys.forEach(k => {
         if (!present.has(k)) present.set(k, []);
         present.get(k)!.push(ev);
       });
     });
+
     const orderedKeys = [
       ...cyclesRef.filter(c => present.has(c)),
       ...Array.from(present.keys()).filter(k => !cyclesRef.includes(k)).sort()
@@ -438,7 +517,8 @@ export default function HistoryTimelineApp() {
             title={`${a.cycle_key ?? ""} ${a.aspect} ${a.sign_a} ${a.deg_a} – ${a.sign_b} ${a.deg_b}`}
             onClick={() => {
               if (!a.cycle_key) return;
-              setSelectedCycles(s => s.includes(a.cycle_key!) ? s.filter(x => x !== a.cycle_key) : [...s, a.cycle_key!]);
+              const key = canonicalizeCycleKey(a.cycle_key);
+              setSelectedCycles(s => s.includes(key) ? s.filter(x => x !== key) : [...s, key]);
             }}
           >
             {a.cycle_key ?? a.aspect}
@@ -457,7 +537,7 @@ export default function HistoryTimelineApp() {
                 setSelectedWaves(s => s.includes(wid) ? s.filter(x => x !== wid) : [...s, wid]);
               }}
             >
-              {w.wave_name} {stage ? `(${stage})` : ""}{compact ? "" : ` @ ${w.anchor_deg}°`}
+              {`Wave ${wid} — ${w.wave_name}`} {stage ? `(${stage})` : ""}{compact ? "" : ` @ ${w.anchor_deg}°`}
             </Badge>
           );
         })}
@@ -541,6 +621,36 @@ export default function HistoryTimelineApp() {
 
       {/* Controls */}
       <div className="mx-auto max-w-6xl px-4 py-4 grid grid-cols-1 lg:grid-cols-4 gap-4">
+        {/* Era Jumps */}
+        <div className="lg:col-span-4">
+          <EraJumps
+            yearStart={typeof start === "number" ? start : 1900}
+            yearEnd={typeof end === "number" ? end : 2025}
+            onSetRange={(s, e) => { setStart(s); setEnd(e); }}
+          />
+        </div>
+
+        {/* Cycle Jumps */}
+        <div className="lg:col-span-4">
+          <CycleJumps
+            cycles={cyclesDisplay}
+            selectedCycles={selectedCycles}
+            onJumpCycle={(c) => setSelectedCycles([c])}
+            onSetView={() => setView("cycle")}
+          />
+        </div>
+
+        {/* Wave Jumps */}
+        <div className="lg:col-span-4">
+          <WaveJumps
+            waves={wavesDisplay}
+            selectedWaves={selectedWaves}
+            onJumpWave={(id) => setSelectedWaves([id])}
+            onSetView={() => setView("wave")}
+          />
+        </div>
+
+        {/* Search */}
         <div className="lg:col-span-2 flex items-center gap-2 border rounded-2xl px-3 py-2 bg-white shadow-sm dark:bg-gray-900 dark:border-gray-800 surface">
           <Search className="w-4 h-4 text-gray-500 dark:text-gray-400"/>
           <input
@@ -551,6 +661,7 @@ export default function HistoryTimelineApp() {
           />
         </div>
 
+        {/* Year range inputs */}
         <div className="flex items-center gap-2 border rounded-2xl px-3 py-2 bg-white shadow-sm dark:bg-gray-900 dark:border-gray-800 surface">
           <Calendar className="w-4 h-4 text-gray-500 dark:text-gray-400"/>
           <input type="number" value={start} onChange={e=>setStart(e.target.value ? Number(e.target.value) : "")} className="w-20 outline-none bg-transparent"/>
@@ -558,6 +669,7 @@ export default function HistoryTimelineApp() {
           <input type="number" value={end} onChange={e=>setEnd(e.target.value ? Number(e.target.value) : "")} className="w-20 outline-none bg-transparent"/>
         </div>
 
+        {/* Reset */}
         <div className="flex items-center justify-end">
           <button
             onClick={resetFilters}
@@ -568,6 +680,7 @@ export default function HistoryTimelineApp() {
           </button>
         </div>
 
+        {/* Filters panel */}
         <details className="lg:col-span-4 border rounded-2xl px-3 py-2 bg-white shadow-sm dark:bg-gray-900 dark:border-gray-800 surface">
           <summary className="flex items-center gap-2 cursor-pointer select-none">
             <Filter className="w-4 h-4 text-gray-500 dark:text-gray-400"/>Filters <ChevronDown className="w-4 h-4 ml-auto"/>
@@ -576,16 +689,19 @@ export default function HistoryTimelineApp() {
             <div>
               <div className="text-xs text-gray-500 dark:text-gray-400 mb-2 subtle">Cycles</div>
               <div className="flex flex-wrap gap-2">
-                {(reference?.cycles ?? []).map(c => (
-                  <ToggleChip
-                    key={c}
-                    label={c}
-                    active={selectedCycles.includes(c)}
-                    onClick={() =>
-                      setSelectedCycles(s => s.includes(c) ? s.filter(x=>x!==c) : [...s, c])
-                    }
-                  />
-                ))}
+                {(reference?.cycles ?? []).map(raw => {
+                  const c = canonicalizeCycleKey(raw);
+                  return (
+                    <ToggleChip
+                      key={c}
+                      label={raw}
+                      active={selectedCycles.includes(c)}
+                      onClick={() =>
+                        setSelectedCycles(s => s.includes(c) ? s.filter(x=>x!==c) : [...s, c])
+                      }
+                    />
+                  );
+                })}
               </div>
             </div>
             <div>
