@@ -40,4 +40,15 @@ Thumbs.db
 # === Environment/config ===
 .env
 .env.local
+# === App-specific ignores ===
+# Auto-generated sync/version metadata
+/public/data/version.json
+
+# Temporary or synced data artifacts (keep curated reference.json & schema)
+# Comment these out if you DO want them versioned
+/data/*.csv
+/data/*.json
+!/data/reference.json
+!/data/history_timeline_schema.json
+!/data/eras.ts
 
