@@ -1,0 +1,4 @@
+aspect_id,wave_id,wave_name,anchor_sign,center_anchor_deg,strength,coverage_start,coverage_end,max_delta_deg,notes
+ASP-1989-SAT-NEP-1,10,Genesis Mirrors,Capricorn,11,anchor,1989-03-03,1989-03-03,0,"Exact hit (Pass 1) on 11° Cap"
+ASP-1989-SAT-NEP-2,10,Genesis Mirrors,Capricorn,11,anchor,1989-06-24,1989-06-24,0,"Exact hit (Pass 2) on 11° Cap"
+ASP-1989-SAT-NEP-1,10,Genesis Mirrors,Capricorn,11,field,1988-12-01,1989-09-30,1.0,"Conjunction field within ~1° of exact"
