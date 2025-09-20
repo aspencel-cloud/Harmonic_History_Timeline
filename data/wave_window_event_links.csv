@@ -1,0 +1,6 @@
+aspect_id,event_id,wave_id,relation,strength,notes
+ASP-1989-SAT-NEP-1,EVT-1989-WWW,10,in_window,2,"+9d from Pass 1"
+ASP-1989-SAT-NEP-1,EVT-1989-EXXON-VALDEZ,10,in_window,2,"+21d"
+ASP-1989-SAT-NEP-1,EVT-1989-TIANANMEN-PROTESTS,10,in_window,2,"+43d"
+ASP-1989-SAT-NEP-2,EVT-1989-BALTIC-WAY,10,in_window,2,"+60d"
+ASP-1989-SAT-NEP-2,EVT-1989-VOYAGER2,10,in_window,2,"+62d"

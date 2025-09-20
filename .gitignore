@@ -1,28 +1,24 @@
 # === Python ===
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 *.egg-info/
 .eggs/
-
-# Virtual environments
 .venv/
 venv/
 env/
 
-# === Data outputs ===
+# === Data outputs (non-source) ===
 outputs/
 *.log
 *.tmp
 *.bak
 *.swp
 
-# Jupyter notebooks (if you ever experiment)
+# === Jupyter ===
 .ipynb_checkpoints/
 *.ipynb
 
-# === Node/JS (for your future React/D3 app) ===
+# === Node/JS ===
 node_modules/
 dist/
 build/
@@ -37,18 +33,10 @@ Thumbs.db
 .vscode/
 .idea/
 
-# === Environment/config ===
+# === Environment ===
 .env
 .env.local
-# === App-specific ignores ===
-# Auto-generated sync/version metadata
+
+# === App-specific (generated) ===
 /public/data/version.json
-
-# Temporary or synced data artifacts (keep curated reference.json & schema)
-# Comment these out if you DO want them versioned
-/data/*.csv
-/data/*.json
-!/data/reference.json
-!/data/history_timeline_schema.json
-!/data/eras.ts
-
+/data/validation_report.csv

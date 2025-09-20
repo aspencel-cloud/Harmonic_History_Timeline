@@ -1,9 +1,46 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Search, Filter, ChevronDown, Calendar, Activity, LayoutGrid, Sun, Moon, SlidersHorizontal } from "lucide-react";
-import EraJumps from "./components/EraJumps";
-import CycleJumps from "./components/CycleJumps";
-import WaveJumps from "./components/WaveJumps";
+import {
+  Search, Filter, ChevronDown, Calendar, Activity, LayoutGrid, Sun, Moon, SlidersHorizontal
+} from "lucide-react";
+
+import { CycleLegend } from "./ui/badges/CycleBadge";
+import { WaveChip } from "./ui/badges/WaveChip";
+import { CenturyChip } from "./ui/badges/CenturyChip";
+import { buildEventIndexes } from "./data/buildIndexes";
+import { EventMetaChips } from "./ui/EventMetaChips";
+
+// ───────────────────────────────────────────────────────────────────────────────
+// Tiny error boundary so you never get a silent white screen again
+class ErrorCatcher extends React.Component<{ children: React.ReactNode }, { err: any }> {
+  constructor(props: any) {
+    super(props);
+    this.state = { err: null };
+  }
+  componentDidCatch(err: any) {
+    console.error("[ErrorCatcher]", err);
+    this.setState({ err });
+  }
+  render() {
+    if (this.state.err) {
+      const msg = String(this.state.err?.stack || this.state.err);
+      return (
+        <div className="p-4 text-red-600 dark:text-red-400 text-sm whitespace-pre-wrap">
+          {msg}
+        </div>
+      );
+    }
+    return this.props.children as any;
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
+// Feature flags
+const SHOW_VIEW_SWITCHER = false; // hide the "Decade" pill in the toolbar
+
+// Force-visible **century** range, independent of data
+const CENTURY_MIN_OVERRIDE = 1500;  // shows 1500s upward
+const CENTURY_MAX_OVERRIDE = 2100;  // includes 2000s (2000–2099)
 
 // ───────────────────────────────────────────────────────────────────────────────
 // CSV parser
@@ -137,20 +174,11 @@ function yearOf(date: string): number {
   return Number.isFinite(y) ? y : NaN;
 }
 const decadeOf = (y: number) => Math.floor(y / 10) * 10;
-function stageOfDegree(deg: number) {
-  if (deg >= 0 && deg <= 9) return "Early";
-  if (deg >= 10 && deg <= 19) return "Mid";
-  if (deg >= 20 && deg <= 29) return "Late";
-  return "";
-}
 
-// Dash/cycle normalization (forgiving comparisons)
 const EN_DASH = "\u2013";
-const DASH_RX = /[\u2012\u2013\u2014\u2212-]/g; // figure/en/em/minus/hyphen
+const DASH_RX = /[\u2012\u2013\u2014\u2212-]/g;
 function normalizeDashes(input: string): string {
-  return input
-    .replace(DASH_RX, EN_DASH)
-    .replace(/\s*\u2013\s*/g, EN_DASH); // tighten spaces around dash
+  return input.replace(DASH_RX, EN_DASH).replace(/\s*\u2013\s*/g, EN_DASH);
 }
 function canonicalizeCycleKey(raw: string): string {
   return normalizeDashes(raw).replace(/\s+/g, " ").trim();
@@ -170,31 +198,13 @@ const Badge: React.FC<React.PropsWithChildren<{ title?: string; onClick?: () => 
   </button>
 );
 
-const ToggleChip: React.FC<{ active: boolean; onClick: () => void; label: string }>
-= ({ active, onClick, label }) => (
-  <button
-    onClick={onClick}
-    className={`px-3 py-1 rounded-2xl border text-sm
-                ${active ? "bg-black text-white dark:bg-white dark:text-black" : "bg-white hover:bg-gray-50 dark:bg-gray-900 dark:text-gray-200 dark:border-gray-700 dark:hover:bg-gray-800"}`}
-  >
-    {label}
-  </button>
-);
-
-// Accessible switch using checkbox
 const OptSwitch: React.FC<{ checked: boolean; onChange: (v:boolean)=>void; label: string; icon?: React.ReactNode; id: string }>
 = ({ checked, onChange, label, icon, id }) => (
   <div className="flex items-center justify-between py-1.5">
     <label htmlFor={id} className="text-sm select-none">{label}</label>
     <div className="flex items-center gap-2">
       {icon}
-      <input
-        id={id}
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="peer sr-only"
-      />
+      <input id={id} type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="peer sr-only" />
       <label
         htmlFor={id}
         className="relative inline-flex h-5 w-9 items-center rounded-full cursor-pointer
@@ -239,6 +249,16 @@ function SectionShell({ title, children }: { title: string; children: React.Reac
   );
 }
 
+// Debounce helper (for counts)
+function useDebounced<T>(value: T, ms = 150) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
+
 // ───────────────────────────────────────────────────────────────────────────────
 // Main
 export default function HistoryTimelineApp(props: HistoryTimelineAppProps) {
@@ -253,11 +273,8 @@ export default function HistoryTimelineApp(props: HistoryTimelineAppProps) {
   const initQ = url ? (url.searchParams.get("q") ?? "") : "";
   const initStart = url ? parseNum(url.searchParams.get("start"), 1900) : 1900;
   const initEnd = url ? parseNum(url.searchParams.get("end"), 2025) : 2025;
-
-  // Canonicalize cycles on URL init so hyphen inputs also work
   const initCyclesRaw = url ? parseCSVParam(url.searchParams.get("cycles")) : [];
   const initCycles = initCyclesRaw.map(canonicalizeCycleKey);
-
   const initWaves = url ? parseCSVParamNum(url.searchParams.get("waves")) : [];
   const initView: ViewMode = (url?.searchParams.get("view") as ViewMode) || "decade";
 
@@ -271,34 +288,25 @@ export default function HistoryTimelineApp(props: HistoryTimelineAppProps) {
     return false;
   });
   const [compact, setCompact] = useState<boolean>(() => (localStorage.getItem("opt_compact") === "1"));
+  const [wide, setWide] = useState<boolean>(() => (localStorage.getItem("opt_wide") === "1"));
+  useEffect(() => { localStorage.setItem("opt_wide", wide ? "1" : "0"); }, [wide]);
+  const containerW = wide ? "max-w-[1400px]" : "max-w-6xl";
 
   // Filters (controlled-friendly)
   const [q, setQ] = useState(initQ);
-
-  // local mirrors for start/end; overridden if parent provides props
   const [startLocal, setStartLocal] = useState<number | "">(initStart);
   const [endLocal, setEndLocal] = useState<number | "">(initEnd);
 
   // reflect parent props into locals (controlled mode)
-  useEffect(() => {
-    if (props.yearStart !== undefined) setStartLocal(props.yearStart);
-  }, [props.yearStart]);
-  useEffect(() => {
-    if (props.yearEnd !== undefined) setEndLocal(props.yearEnd);
-  }, [props.yearEnd]);
+  useEffect(() => { if (props.yearStart !== undefined) setStartLocal(props.yearStart); }, [props.yearStart]);
+  useEffect(() => { if (props.yearEnd !== undefined) setEndLocal(props.yearEnd); }, [props.yearEnd]);
 
   // unified getters/setters used by rest of component
   const start = props.yearStart !== undefined ? props.yearStart : startLocal;
   const end   = props.yearEnd   !== undefined ? props.yearEnd   : endLocal;
 
-  const setStart = (v: number | "") => {
-    if (props.onSetYearRange) props.onSetYearRange(v, end);
-    else setStartLocal(v);
-  };
-  const setEnd = (v: number | "") => {
-    if (props.onSetYearRange) props.onSetYearRange(start, v);
-    else setEndLocal(v);
-  };
+  const setStart = (v: number | "") => { if (props.onSetYearRange) props.onSetYearRange(v, end); else setStartLocal(v); };
+  const setEnd   = (v: number | "") => { if (props.onSetYearRange) props.onSetYearRange(start, v); else setEndLocal(v); };
 
   const [selectedCycles, setSelectedCycles] = useState<string[]>(initCycles);
   const [selectedWaves, setSelectedWaves] = useState<number[]>(initWaves);
@@ -320,9 +328,7 @@ export default function HistoryTimelineApp(props: HistoryTimelineAppProps) {
   }, [dark]);
 
   // Persist compact
-  useEffect(() => {
-    localStorage.setItem("opt_compact", compact ? "1" : "0");
-  }, [compact]);
+  useEffect(() => { localStorage.setItem("opt_compact", compact ? "1" : "0"); }, [compact]);
 
   // Load data
   useEffect(() => {
@@ -340,9 +346,7 @@ export default function HistoryTimelineApp(props: HistoryTimelineAppProps) {
   }, []);
 
   // Sync URL
-  useEffect(() => {
-    setURLParams({ q, start, end, cycles: selectedCycles, waves: selectedWaves, view });
-  }, [q, start, end, selectedCycles, selectedWaves, view]);
+  useEffect(() => { setURLParams({ q, start, end, cycles: selectedCycles, waves: selectedWaves, view }); }, [q, start, end, selectedCycles, selectedWaves, view]);
 
   // Dev sanity
   useEffect(() => {
@@ -359,25 +363,6 @@ export default function HistoryTimelineApp(props: HistoryTimelineAppProps) {
   // Canonical cycles for ordering/labels
   const cyclesRefRaw = reference?.cycles ?? [];
   const cyclesRef = useMemo(() => cyclesRefRaw.map(canonicalizeCycleKey), [cyclesRefRaw]);
-
-  // Quick-jump display lists
-  const cyclesDisplay = cyclesRef; // nice en-dash labels already
-
-  const wavesDisplay = useMemo(() => {
-    const out: { id: number; label: string }[] = [];
-    const entries = reference?.waves ? Object.entries(reference.waves) : [];
-    const sorted = entries.sort((a, b) => Number(a[0]) - Number(b[0]));
-    for (const [idStr, meta] of sorted) {
-      const id = Number(idStr);
-      if (!Number.isFinite(id)) continue;
-      const name = (meta as any)?.name ?? `Wave ${id}`;
-      out.push({ id, label: `Wave ${id} — ${name}` });
-    }
-    if (!out.length) {
-      for (let i = 1; i <= 10; i++) out.push({ id: i, label: `Wave ${i}` });
-    }
-    return out;
-  }, [reference?.waves]);
 
   // Join
   const eventsEnriched = useMemo(() => {
@@ -399,7 +384,53 @@ export default function HistoryTimelineApp(props: HistoryTimelineAppProps) {
     }));
   }, [events, aspects, waves]);
 
-  // Filters
+  // Build per-event indexes for meta chips (cycles + waves)  ← this was missing before
+  const { cycles: eventCycles, waves: eventWaves } = useMemo(
+    () =>
+      buildEventIndexes(
+        (aspects ?? []).map(a => ({ event_id: a.event_id, cycle_key: a.cycle_key ?? "" })),
+        (waves ?? []).map(w => ({ event_id: w.event_id, wave_id: w.wave_id }))
+      ),
+    [aspects, waves]
+  );
+
+  // Base set for counts (search + year range only)
+  const qDeb = useDebounced(q, 150);
+  const baseFiltered = useMemo(() => {
+    return eventsEnriched.filter(e => {
+      const y = e._year;
+      if (!Number.isFinite(y)) return false;
+      if (start !== "" && y < (start as number)) return false;
+      if (end !== "" && y > (end as number)) return false;
+      const hay = `${e.title} ${e.summary ?? ""} ${e.tags ?? ""}`.toLowerCase();
+      return qDeb ? hay.includes(qDeb.toLowerCase()) : true;
+    });
+  }, [eventsEnriched, start, end, qDeb]);
+
+  // Counts for chips
+  const { centuryCounts, cycleCounts, waveCounts } = useMemo(() => {
+    const cc = new Map<number, number>();
+    const cy = new Map<string, number>();
+    const ww = new Map<number, number>();
+
+    for (const e of baseFiltered) {
+      const cent = Math.floor(e._year / 100) * 100;
+      cc.set(cent, (cc.get(cent) ?? 0) + 1);
+
+      const cset = new Set(
+        e._aspects.map(a => a.cycle_key ? canonicalizeCycleKey(a.cycle_key) : "").filter(Boolean)
+      );
+      for (const k of cset) cy.set(k, (cy.get(k) ?? 0) + 1);
+
+      const wset = new Set(
+        e._waves.map(w => Number(w.wave_id)).filter(n => Number.isFinite(n))
+      ) as Set<number>;
+      for (const wid of wset) ww.set(wid, (ww.get(wid) ?? 0) + 1);
+    }
+    return { centuryCounts: cc, cycleCounts: cy, waveCounts: ww };
+  }, [baseFiltered]);
+
+  // Full filtered (adds cycle/wave filters)
   const filtered = useMemo(() => {
     return eventsEnriched.filter(e => {
       const y = e._year;
@@ -443,9 +474,7 @@ export default function HistoryTimelineApp(props: HistoryTimelineAppProps) {
     filtered.forEach(ev => {
       const keys = Array.from(
         new Set(
-          ev._aspects
-            .map(a => a.cycle_key ? canonicalizeCycleKey(a.cycle_key) : "")
-            .filter(Boolean)
+          ev._aspects.map(a => a.cycle_key ? canonicalizeCycleKey(a.cycle_key) : "").filter(Boolean)
         )
       ) as string[];
       keys.forEach(k => {
@@ -453,7 +482,6 @@ export default function HistoryTimelineApp(props: HistoryTimelineAppProps) {
         present.get(k)!.push(ev);
       });
     });
-
     const orderedKeys = [
       ...cyclesRef.filter(c => present.has(c)),
       ...Array.from(present.keys()).filter(k => !cyclesRef.includes(k)).sort()
@@ -474,8 +502,59 @@ export default function HistoryTimelineApp(props: HistoryTimelineAppProps) {
     return ordered.map(id => ({ key: `Wave ${id}`, list: (present.get(id) ?? []).sort((a,b)=>a._year - b._year) }));
   }, [filtered]);
 
+  // Dataset span (for clearing chips)
+  const [datasetStart, datasetEnd] = useMemo(() => {
+    const ys = (events ?? []).map(e => Number(e.date?.slice(0,4))).filter(Number.isFinite) as number[];
+    if (!ys.length) return [1900, 2029];
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    return [minY, maxY];
+  }, [events]);
+
+  // CENTURY chips
+  const availableCenturies = useMemo(() => {
+    const years = (events ?? [])
+      .map(e => Number(e.date?.slice(0, 4)))
+      .filter(Number.isFinite) as number[];
+
+    const minY = years.length ? Math.min(...years) : CENTURY_MIN_OVERRIDE;
+    const maxY = years.length ? Math.max(...years) : CENTURY_MIN_OVERRIDE;
+
+    const minCentury = Math.floor(Math.min(CENTURY_MIN_OVERRIDE, minY) / 100) * 100;
+    const maxCentury = Math.floor(Math.max(CENTURY_MAX_OVERRIDE, maxY) / 100) * 100;
+
+    const out: number[] = [];
+    for (let c = minCentury; c <= maxCentury; c += 100) out.push(c);
+    return out;
+  }, [events]);
+
+  // Which centuries have results under current query+range (for muted style)
+  const centuriesWithResults = useMemo(() => {
+    const set = new Set<number>();
+    for (const e of baseFiltered) {
+      const y = Number(e._year);
+      if (Number.isFinite(y)) set.add(Math.floor(y / 100) * 100);
+    }
+    return set;
+  }, [baseFiltered]);
+
+  const activeCentury =
+    typeof start === "number" && typeof end === "number" && end === (start as number) + 99
+      ? (start as number)
+      : null;
+
+  const toggleCentury = (c: number) => {
+    if (activeCentury === c) {
+      setStart(datasetStart);
+      setEnd(datasetEnd);
+    } else {
+      setStart(c);
+      setEnd(c + 99);
+      setView("decade");
+    }
+  };
+
   const resetFilters = () => {
-    setQ(""); setStart(1900); setEnd(2025);
+    setQ(""); setStart(datasetStart); setEnd(datasetEnd);
     setSelectedCycles([]); setSelectedWaves([]);
   };
 
@@ -487,7 +566,13 @@ export default function HistoryTimelineApp(props: HistoryTimelineAppProps) {
     view === "cycle"  ? "Grouped by synodic cycle" :
                         "Grouped by harmonic wave";
 
-  // Shared event card (clickable badges + stage)
+  const toggleCycle = (c: string) => {
+    setSelectedCycles(s => s.includes(c) ? s.filter(x => x !== c) : [...s, c]);
+  };
+  const toggleWave = (w: number) => {
+    setSelectedWaves(s => s.includes(w) ? s.filter(x => x !== w) : [...s, w].sort((a,b)=>a-b));
+  };
+
   const EventCard: React.FC<{ e: any; idx: number }> = ({ e, idx }) => (
     <motion.div
       key={e.event_id}
@@ -510,38 +595,17 @@ export default function HistoryTimelineApp(props: HistoryTimelineAppProps) {
       {!compact && e.summary && (
         <p className="mt-1 text-sm leading-relaxed text-gray-700 dark:text-gray-300">{e.summary}</p>
       )}
-      <div className={`mt-3 flex flex-wrap gap-2 ${compact ? "gap-1 text-[11px]" : ""}`}>
-        {e._aspects.map((a: AspectRow) => (
-          <Badge
-            key={a.aspect_id}
-            title={`${a.cycle_key ?? ""} ${a.aspect} ${a.sign_a} ${a.deg_a} – ${a.sign_b} ${a.deg_b}`}
-            onClick={() => {
-              if (!a.cycle_key) return;
-              const key = canonicalizeCycleKey(a.cycle_key);
-              setSelectedCycles(s => s.includes(key) ? s.filter(x => x !== key) : [...s, key]);
-            }}
-          >
-            {a.cycle_key ?? a.aspect}
-          </Badge>
-        ))}
-        {e._waves.map((w: WaveTagRow) => {
-          const deg = Number(w.anchor_deg);
-          const stage = Number.isFinite(deg) ? stageOfDegree(deg) : "";
-          const wid = Number(w.wave_id);
-          return (
-            <Badge
-              key={w.wave_tag_id}
-              title={`${w.wave_name} • ${stage ? stage + " • " : ""}${w.anchor_deg}° ${w.anchor_sign}${w.anchor_object ? " — " + w.anchor_object : ""}`}
-              onClick={() => {
-                if (!Number.isFinite(wid)) return;
-                setSelectedWaves(s => s.includes(wid) ? s.filter(x => x !== wid) : [...s, wid]);
-              }}
-            >
-              {`Wave ${wid} — ${w.wave_name}`} {stage ? `(${stage})` : ""}{compact ? "" : ` @ ${w.anchor_deg}°`}
-            </Badge>
-          );
-        })}
-      </div>
+
+      <EventMetaChips
+        eventId={e.event_id}
+        cycleMap={eventCycles}
+        waveMap={eventWaves}
+        activeCycles={new Set(selectedCycles)}
+        activeWaves={new Set(selectedWaves)}
+        onToggleCycle={toggleCycle}
+        onToggleWave={toggleWave}
+      />
+
       {e.source_url && (
         <a href={e.source_url} target="_blank" rel="noreferrer" className={`mt-3 inline-block text-sm underline ${compact ? "hidden" : ""}`}>
           Source ↗
@@ -557,185 +621,171 @@ export default function HistoryTimelineApp(props: HistoryTimelineAppProps) {
                         waveGroups;
 
   return (
-    <div
-      id="app-root"
-      className="min-h-screen bg-gradient-to-b from-gray-50 to-white text-gray-900 dark:from-gray-900 dark:to-gray-950 dark:text-gray-100"
-    >
-      {/* Header */}
-      <div className="sticky top-0 z-10 backdrop-blur bg-white/70 dark:bg-gray-900/70 border-b border-gray-200 dark:border-gray-800 header-surface">
-        <div className="mx-auto max-w-6xl px-4 py-3 flex items-center gap-3">
-          <Activity className="w-5 h-5"/>
-          <h1 className="text-lg font-semibold">Harmonic History Timeline</h1>
-          <span className="text-sm text-gray-500 dark:text-gray-400 subtle">{viewSubtitle}</span>
-          <span className="ml-auto text-sm text-gray-500 dark:text-gray-400 subtle">{filtered.length} result{filtered.length === 1 ? "" : "s"}</span>
-        </div>
-      </div>
-
-      {/* View Switcher + Options */}
-      <div className="mx-auto max-w-6xl px-4 pt-4 flex items-center gap-3">
-        <div className="inline-flex items-center gap-1 rounded-2xl border bg-white shadow-sm p-1 dark:bg-gray-900 dark:border-gray-800 surface">
-          <button
-            className={`px-3 py-1.5 rounded-2xl text-sm ${view === "decade" ? "bg-black text-white dark:bg-white dark:text-black" : "hover:bg-gray-50 dark:hover:bg-gray-800"}`}
-            onClick={() => setView("decade")}
-            title="Chronological by decades"
-          >Decade</button>
-          <button
-            className={`px-3 py-1.5 rounded-2xl text-sm ${view === "cycle" ? "bg-black text-white dark:bg-white dark:text-black" : "hover:bg-gray-50 dark:hover:bg-gray-800"}`}
-            onClick={() => setView("cycle")}
-            title="Group by synodic cycle"
-          >Cycle</button>
-          <button
-            className={`px-3 py-1.5 rounded-2xl text-sm ${view === "wave" ? "bg-black text-white dark:bg-white dark:text-black" : "hover:bg-gray-50 dark:hover:bg-gray-800"}`}
-            onClick={() => setView("wave")}
-            title="Group by harmonic wave"
-          >Wave</button>
-          <div className="pl-2 pr-3 text-gray-400"><LayoutGrid className="w-4 h-4" /></div>
+    <ErrorCatcher>
+      <div
+        id="app-root"
+        className="min-h-screen bg-gradient-to-b from-gray-50 to-white text-gray-900 dark:from-gray-900 dark:to-gray-950 dark:text-gray-100"
+      >
+        {/* Header */}
+        <div className="sticky top-0 z-10 backdrop-blur bg-white/70 dark:bg-gray-900/70 border-b border-gray-200 dark:border-gray-800 header-surface">
+          <div className={`mx-auto ${containerW} px-4 py-3 flex items-center gap-3`}>
+            <Activity className="w-5 h-5"/>
+            <h1 className="text-lg font-semibold">Harmonic History Timeline</h1>
+            <span className="text-sm text-gray-500 dark:text-gray-400 subtle">{viewSubtitle}</span>
+            <span className="ml-auto text-sm text-gray-500 dark:text-gray-400 subtle">{filtered.length} result{filtered.length === 1 ? "" : "s"}</span>
+          </div>
         </div>
 
-        {/* Options dropdown */}
-        <details className="relative inline-block ml-1">
-          <summary className="list-none inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl border bg-white shadow-sm cursor-pointer select-none dark:bg-gray-900 dark:border-gray-800 surface">
-            <SlidersHorizontal className="w-4 h-4" />
-            <span className="text-sm">Options</span>
-            <ChevronDown className="w-4 h-4 opacity-60" />
-          </summary>
-          <div className="absolute mt-2 min-w-[240px] rounded-xl border bg-white p-3 shadow-lg z-20
-                          dark:bg-gray-900 dark:border-gray-800 surface">
-            <div className="mb-1 text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 subtle">Display</div>
-            <OptSwitch
-              id="opt-dark"
-              checked={dark}
-              onChange={setDark}
-              label="Dark mode"
-              icon={dark ? <Moon className="w-4 h-4 opacity-70"/> : <Sun className="w-4 h-4 opacity-70"/>}
-            />
-            <OptSwitch
-              id="opt-compact"
-              checked={compact}
-              onChange={setCompact}
-              label="Compact cards (hide summaries)"
+        {/* View Switcher (hidden) + Options */}
+        <div className={`mx-auto ${containerW} px-4 pt-4 flex items-center gap-3`}>
+          {SHOW_VIEW_SWITCHER && (
+            <div className="inline-flex items-center gap-1 rounded-2xl border bg-white shadow-sm p-1 dark:bg-gray-900 dark:border-gray-800 surface">
+              <button
+                className={`px-3 py-1.5 rounded-2xl text-sm ${view === "decade" ? "bg-black text-white dark:bg-white dark:text-black" : "hover:bg-gray-50 dark:hover:bg-gray-800"}`}
+                onClick={() => setView("decade")}
+                title="Chronological by decades"
+              >Decade</button>
+              <div className="pl-2 pr-3 text-gray-400"><LayoutGrid className="w-4 h-4" /></div>
+            </div>
+          )}
+
+          {/* Options dropdown */}
+          <details className="relative inline-block ml-1">
+            <summary className="list-none inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl border bg-white shadow-sm cursor-pointer select-none dark:bg-gray-900 dark:border-gray-800 surface">
+              <SlidersHorizontal className="w-4 h-4" />
+              <span className="text-sm">Options</span>
+              <ChevronDown className="w-4 h-4 opacity-60" />
+            </summary>
+            <div className="absolute mt-2 min-w-[240px] rounded-xl border bg-white p-3 shadow-lg z-20
+                            dark:bg-gray-900 dark:border-gray-800 surface">
+              <div className="mb-1 text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 subtle">Display</div>
+              <OptSwitch
+                id="opt-dark"
+                checked={dark}
+                onChange={setDark}
+                label="Dark mode"
+                icon={dark ? <Moon className="w-4 h-4 opacity-70"/> : <Sun className="w-4 h-4 opacity-70"/>}
+              />
+              <OptSwitch
+                id="opt-compact"
+                checked={compact}
+                onChange={setCompact}
+                label="Compact cards (hide summaries)"
+              />
+              <OptSwitch
+                id="opt-wide"
+                checked={wide}
+                onChange={setWide}
+                label="Wide layout"
+              />
+            </div>
+          </details>
+        </div>
+
+        {/* Controls */}
+        <div className={`mx-auto ${containerW} px-4 py-4 grid grid-cols-1 lg:grid-cols-4 gap-4`}>
+          {/* Search */}
+          <div className="lg:col-span-2 flex items-center gap-2 border rounded-2xl px-3 py-2 bg-white shadow-sm dark:bg-gray-900 dark:border-gray-800 surface">
+            <Search className="w-4 h-4 text-gray-500 dark:text-gray-400"/>
+            <input
+              id="search-input"
+              value={q}
+              onChange={e=>setQ(e.target.value)}
+              placeholder="Search titles, summaries, tags…"
+              className="w-full outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-500"
             />
           </div>
-        </details>
-      </div>
 
-      {/* Controls */}
-      <div className="mx-auto max-w-6xl px-4 py-4 grid grid-cols-1 lg:grid-cols-4 gap-4">
-        {/* Era Jumps */}
-        <div className="lg:col-span-4">
-          <EraJumps
-            yearStart={typeof start === "number" ? start : 1900}
-            yearEnd={typeof end === "number" ? end : 2025}
-            onSetRange={(s, e) => { setStart(s); setEnd(e); }}
-          />
-        </div>
+          {/* Year range inputs */}
+          <div className="flex items-center gap-2 border rounded-2xl px-3 py-2 bg-white shadow-sm dark:bg-gray-900 dark:border-gray-800 surface">
+            <Calendar className="w-4 h-4 text-gray-500 dark:text-gray-400"/>
+            <input type="number" value={start} onChange={e=>setStart(e.target.value ? Number(e.target.value) : "")} className="w-20 outline-none bg-transparent"/>
+            <span>—</span>
+            <input type="number" value={end} onChange={e=>setEnd(e.target.value ? Number(e.target.value) : "")} className="w-20 outline-none bg-transparent"/>
+          </div>
 
-        {/* Cycle Jumps */}
-        <div className="lg:col-span-4">
-          <CycleJumps
-            cycles={cyclesDisplay}
-            selectedCycles={selectedCycles}
-            onJumpCycle={(c) => setSelectedCycles([c])}
-            onSetView={() => setView("cycle")}
-          />
-        </div>
+          {/* Reset */}
+          <div className="flex items-center justify-end">
+            <button
+              onClick={resetFilters}
+              className="border rounded-2xl px-3 py-2 bg-white shadow-sm hover:bg-gray-50 dark:bg-gray-900 dark:hover:bg-gray-800 dark:border-gray-800 surface"
+              title="Reset all filters"
+            >
+              Reset
+            </button>
+          </div>
 
-        {/* Wave Jumps */}
-        <div className="lg:col-span-4">
-          <WaveJumps
-            waves={wavesDisplay}
-            selectedWaves={selectedWaves}
-            onJumpWave={(id) => setSelectedWaves([id])}
-            onSetView={() => setView("wave")}
-          />
-        </div>
+          {/* Filters panel */}
+          <details className="lg:col-span-4 border rounded-2xl px-3 py-2 bg-white shadow-sm dark:bg-gray-900 dark:border-gray-800 surface">
+            <summary className="flex items-center gap-2 cursor-pointer select-none">
+              <Filter className="w-4 h-4 text-gray-500 dark:text-gray-400"/>Filters <ChevronDown className="w-4 h-4 ml-auto"/>
+            </summary>
+            <div className="pt-3 space-y-3">
+              <div className="pt-3 border-t border-gray-200 dark:border-gray-800">
+                <div className="text-xs text-gray-500 dark:text-gray-400 mb-2 subtle">
+                  Legend (click to filter)
+                </div>
 
-        {/* Search */}
-        <div className="lg:col-span-2 flex items-center gap-2 border rounded-2xl px-3 py-2 bg-white shadow-sm dark:bg-gray-900 dark:border-gray-800 surface">
-          <Search className="w-4 h-4 text-gray-500 dark:text-gray-400"/>
-          <input
-            value={q}
-            onChange={e=>setQ(e.target.value)}
-            placeholder="Search titles, summaries, tags…"
-            className="w-full outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-500"
-          />
-        </div>
-
-        {/* Year range inputs */}
-        <div className="flex items-center gap-2 border rounded-2xl px-3 py-2 bg-white shadow-sm dark:bg-gray-900 dark:border-gray-800 surface">
-          <Calendar className="w-4 h-4 text-gray-500 dark:text-gray-400"/>
-          <input type="number" value={start} onChange={e=>setStart(e.target.value ? Number(e.target.value) : "")} className="w-20 outline-none bg-transparent"/>
-          <span>—</span>
-          <input type="number" value={end} onChange={e=>setEnd(e.target.value ? Number(e.target.value) : "")} className="w-20 outline-none bg-transparent"/>
-        </div>
-
-        {/* Reset */}
-        <div className="flex items-center justify-end">
-          <button
-            onClick={resetFilters}
-            className="border rounded-2xl px-3 py-2 bg-white shadow-sm hover:bg-gray-50 dark:bg-gray-900 dark:hover:bg-gray-800 dark:border-gray-800 surface"
-            title="Reset all filters"
-          >
-            Reset
-          </button>
-        </div>
-
-        {/* Filters panel */}
-        <details className="lg:col-span-4 border rounded-2xl px-3 py-2 bg-white shadow-sm dark:bg-gray-900 dark:border-gray-800 surface">
-          <summary className="flex items-center gap-2 cursor-pointer select-none">
-            <Filter className="w-4 h-4 text-gray-500 dark:text-gray-400"/>Filters <ChevronDown className="w-4 h-4 ml-auto"/>
-          </summary>
-          <div className="pt-3 space-y-3">
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400 mb-2 subtle">Cycles</div>
-              <div className="flex flex-wrap gap-2">
-                {(reference?.cycles ?? []).map(raw => {
-                  const c = canonicalizeCycleKey(raw);
-                  return (
-                    <ToggleChip
+                {/* Century chips */}
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {availableCenturies.map((c) => (
+                    <CenturyChip
                       key={c}
-                      label={raw}
-                      active={selectedCycles.includes(c)}
-                      onClick={() =>
-                        setSelectedCycles(s => s.includes(c) ? s.filter(x=>x!==c) : [...s, c])
-                      }
+                      centuryStart={c}
+                      active={activeCentury === c}
+                      muted={!centuriesWithResults.has(c)}
+                      count={centuryCounts.get(c) ?? 0}
+                      onClick={() => toggleCentury(c)}
                     />
-                  );
-                })}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400 mb-2 subtle">Waves</div>
-              <div className="flex flex-wrap gap-2">
-                {Array.from({length:10}, (_,i)=>i+1).map(w => (
-                  <ToggleChip
-                    key={w}
-                    label={`Wave ${w}`}
-                    active={selectedWaves.includes(w)}
-                    onClick={() =>
-                      setSelectedWaves(s => s.includes(w) ? s.filter(x=>x!==w) : [...s, w])
-                    }
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        </details>
-      </div>
+                  ))}
+                </div>
 
-      {/* Groups */}
-      <div className="mx-auto max-w-6xl px-4 pb-16">
-        {groups.length === 0 && (
-          <div className="text-sm text-gray-500 dark:text-gray-400 subtle">No events match the current filters.</div>
-        )}
-        {groups.map(({ key, list }) => (
-          <SectionShell key={key} title={key}>
-            {list.map((e: any, idx: number) => (
-              <EventCard key={e.event_id + ":" + key} e={e} idx={idx} />
-            ))}
-          </SectionShell>
-        ))}
+                {/* Cycle legend */}
+                <CycleLegend
+                  cycles={cyclesRef}
+                  activeSet={new Set(selectedCycles)}
+                  countByCycle={cycleCounts}
+                  onToggle={(c) => {
+                    setSelectedCycles(s => s.includes(c) ? s.filter(x=>x!==c) : [...s, c]);
+                    setView("cycle");
+                  }}
+                />
+
+                {/* Wave chips */}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {Array.from({ length: 10 }, (_, i) => i + 1).map((w) => (
+                    <WaveChip
+                      key={w}
+                      waveId={w}
+                      name={reference?.waves?.[String(w)]?.name}
+                      active={selectedWaves.includes(w)}
+                      count={waveCounts.get(w) ?? 0}
+                      onClick={() => {
+                        setSelectedWaves(s => s.includes(w) ? s.filter(x=>x!==w) : [...s, w].sort((a,b)=>a-b));
+                        setView("wave");
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </details>
+        </div>
+
+        {/* Groups */}
+        <div className={`mx-auto ${containerW} px-4 pb-16`}>
+          {groups.length === 0 && (
+            <div className="text-sm text-gray-500 dark:text-gray-400 subtle">No events match the current filters.</div>
+          )}
+          {groups.map(({ key, list }) => (
+            <SectionShell key={key} title={key}>
+              {list.map((e: any, idx: number) => (
+                <EventCard key={e.event_id + ":" + key} e={e} idx={idx} />
+              ))}
+            </SectionShell>
+          ))}
+        </div>
       </div>
-    </div>
+    </ErrorCatcher>
   );
 }
